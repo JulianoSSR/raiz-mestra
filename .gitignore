@@ -1,0 +1,9 @@
+# Artefatos privados de execução e dados do usuário
+.seiva/
+.claude/
+__pycache__/
+*.pyc
+dossies/
+aprendizado/
+consumo.json
+.raiz-mestra/

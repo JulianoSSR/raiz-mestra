@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "raiz-mestra",
+  "description": "Da ideia ao plano com fonte: pergunta antes de desenhar, busca dado público do Brasil, ataca o plano com pré-mortem e entrega só o que tem origem declarada.",
+  "version": "0.1.1",
+  "author": {
+    "name": "JulianoSSR",
+    "url": "https://github.com/JulianoSSR"
+  },
+  "homepage": "https://github.com/JulianoSSR/raiz-mestra",
+  "repository": "https://github.com/JulianoSSR/raiz-mestra",
+  "license": "MIT",
+  "keywords": ["negócios", "empreendedorismo", "validação", "decisão", "dados públicos", "português"],
+  "skills": ["./"]
+}

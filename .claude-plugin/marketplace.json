@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace-manifest.json",
+  "name": "raiz-mestra",
+  "owner": {
+    "name": "JulianoSSR",
+    "url": "https://github.com/JulianoSSR"
+  },
+  "description": "Instala a Raiz Mestra como plugin do Claude Code.",
+  "plugins": [
+    {
+      "name": "raiz-mestra",
+      "source": "./",
+      "description": "Da ideia ao plano com fonte: pergunta antes de desenhar, busca dado público do Brasil, ataca o plano com pré-mortem e entrega só o que tem origem declarada.",
+      "license": "MIT",
+      "keywords": ["negócios", "empreendedorismo", "validação", "decisão", "dados públicos", "português"]
+    }
+  ]
+}
