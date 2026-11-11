@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/raiz-mestra-logo-escuro.svg">
-    <img src="assets/raiz-mestra-logo-completo.svg" alt="Raiz Mestra" width="520">
-  </picture>
+  <img src="assets/raiz-mestra-logo-completo.svg" alt="Raiz Mestra" width="520">
 </p>
 
 <p align="center"><strong>Da ideia ao plano com fonte.</strong></p>
