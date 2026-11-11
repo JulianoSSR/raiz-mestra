@@ -10,11 +10,18 @@ Sem "sim" do usuário, o material de gente real não entra. A resposta registra-
 
 ## Modelo (copiar a partir daqui)
 
+Troque cada `<...>` por um dos valores e apague as linhas entre parênteses ao preencher. Copiado como está, o bloco é reprovado pelo `ficha_lint.py`: o campo `origem:` ainda é o modelo, e cada `<...>`, linha entre parênteses e seção sem texto também reprova. Quem preenche só `origem:` e deixa o resto do modelo reprova do mesmo jeito.
+
+- `origem:` é `real` ou `arquetipo`.
+- `consentimento:` é `sim` ou `nao se aplica`; origem real exige `sim`.
+- `fonte:` é o id do registro de coleta, só quando a origem for real; senão fica vazio.
+- `identificacao_indireta_revisada:` é `sim` ou `nao`; `sim` só depois de reler a ficha.
+
 ```
-origem: arquetipo            # real | arquetipo
-consentimento: nao se aplica # sim | nao se aplica (obrigatório "sim" se origem for real)
-fonte:                       # id do registro de coleta; só quando origem for real
-identificacao_indireta_revisada: nao   # sim | nao; "sim" só depois de reler a ficha
+origem: <real|arquetipo>
+consentimento: <sim|nao se aplica>
+fonte: <id do registro de coleta ou vazio>
+identificacao_indireta_revisada: <sim|nao>
 
 ## Papel na decisão
 (decide, paga, usa, influencia ou barra)

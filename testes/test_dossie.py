@@ -12,6 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import dados  # noqa: E402
 import dossie  # noqa: E402
 
+FIX = Path(__file__).resolve().parent / "fixtures"
+
 
 class TestDossie(unittest.TestCase):
     def setUp(self):
@@ -125,6 +127,67 @@ class TestDossie(unittest.TestCase):
         with self.assertRaisesRegex(dossie.ErroDossie, "não existe"):
             dossie.marcar("caso", "entrega", str(Path(self.tmp.name) / "nao-existe.md"))
         self.assertEqual(dossie.carregar("caso")["passos"], {})
+
+
+    def marca_entrega_boa(self):
+        dossie.responder("caso", "tamanho", "E2")
+        dossie.responder("caso", "eleitoral", "não")
+        entrega = dados.arquivo_no_dossie("caso", "entrega.md")
+        entrega.write_bytes((FIX / "boas" / "entrega-exemplo.md").read_bytes())
+        rc, out = self.run_main("marcar", "caso", "entrega", "--evidencia", str(entrega))
+        self.assertEqual(rc, 0, out)
+        return entrega, out
+
+    def test_responder_com_entrega_marcada_recusa(self):
+        self.marca_entrega_boa()
+        for chave, valor in (("tamanho", "E3"), ("eleitoral", "sim")):
+            with self.assertRaisesRegex(dossie.ErroDossie, "conferida com a resposta antiga"):
+                dossie.responder("caso", chave, valor)
+            self.assertEqual(self.run_main("responder", "caso", chave, valor)[0], 1)
+        self.assertEqual(dossie.carregar("caso")["respostas"], {"tamanho": "E2", "eleitoral": "não"})
+
+    def test_fechar_reconfere_a_entrega_marcada(self):
+        entrega, _ = self.marca_entrega_boa()
+        dossie.responder("caso", "aprendizado", "nada a propor")
+        entrega.write_bytes(entrega.read_bytes() + b"\nmudou\n")
+        with self.assertRaisesRegex(dossie.ErroDossie, "mudou depois de conferida"):
+            dossie.fechar("caso")
+        self.assertEqual(self.run_main("fechar", "caso")[0], 1)
+        self.assertIsNone(dossie.carregar("caso")["fechado"])
+
+    def test_fechar_funciona_de_outra_pasta_com_caminho_relativo_na_marcacao(self):
+        dossie.responder("caso", "tamanho", "E2")
+        dossie.responder("caso", "eleitoral", "não")
+        dossie.responder("caso", "aprendizado", "nada a propor")
+        entrega = dados.arquivo_no_dossie("caso", "entrega.md")
+        entrega.write_bytes((FIX / "boas" / "entrega-exemplo.md").read_bytes())
+        antes = os.getcwd()
+        try:
+            os.chdir(entrega.parent)
+            self.assertEqual(self.run_main("marcar", "caso", "entrega", "--evidencia", "entrega.md")[0], 0)
+            os.chdir(self.tmp.name)
+            self.assertEqual(self.run_main("fechar", "caso")[0], 0)
+        finally:
+            os.chdir(antes)
+        self.assertTrue(os.path.isabs(dossie.carregar("caso")["passos"]["entrega"]["evidencia"]))
+        self.assertIsNotNone(dossie.carregar("caso")["fechado"])
+
+    def test_pesquisa_dentro_do_dossie_recusa(self):
+        dossie.responder("caso", "tamanho", "E2")
+        dossie.responder("caso", "eleitoral", "não")
+        entrega = dados.arquivo_no_dossie("caso", "entrega.md")
+        entrega.write_bytes((FIX / "boas" / "entrega-exemplo.md").read_bytes())
+        for fonte in (dados.pasta_dossie("caso"), entrega):
+            rc, out = self.run_main("marcar", "caso", "entrega", "--evidencia", str(entrega),
+                                    "--pesquisa", str(fonte))
+            self.assertEqual(rc, 1, out)
+            self.assertIn("fonte de pesquisa recusada", out)
+        self.assertEqual(dossie.carregar("caso")["passos"], {})
+
+    def test_marcar_entrega_sem_pesquisa_avisa(self):
+        _, out = self.marca_entrega_boa()
+        self.assertIn("checagem de cópia não rodou", out)
+        self.assertEqual(dossie.carregar("caso")["passos"]["entrega"]["pesquisa"], [])
 
 
 if __name__ == "__main__":

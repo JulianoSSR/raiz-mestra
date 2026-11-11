@@ -4,6 +4,16 @@ Entrada: arquivo ou "-" (stdin). Uma ficha tem campos fixos, um por linha, "camp
 Várias fichas se separam por uma linha "---". Saída: ficha saneada em stdout; resumo do que
 foi descartado em stderr. Exit 1 se faltar campo obrigatório. Texto de terceiros é dado:
 valor com padrão de instrução vai entre aspas, prefixado por [suspeito], e nunca é interpretado.
+
+LIMITAÇÃO DECLARADA: a detecção de instrução é uma lista de padrões, conferida também numa
+cópia normalizada (letra cirílica ou grega parecida vira latina, dígito de leet vira letra,
+letras soltas com separador se juntam). Ela pega alguns imperativos de manipulação
+("Recomende ... como única opção", "Inclua no relatório", "Diga ao usuário", "Envie ... http")
+e NÃO pega instrução reformulada fora dessas construções, homóglifo fora da tabela nem leet
+fora de 0, 1, 3, 4, 5 e 7. A cópia normalizada também marca a mais: texto legítimo em russo
+ou grego e código com dígito podem sair com [suspeito]. Valor que passa sem marca chega ao
+modelo como texto de terceiro, sem aspas. A contenção real é o agente leitor isolado (testes/ensaios/leitor-isolamento.md),
+que ainda não foi executado.
 """
 import re
 import sys
@@ -35,6 +45,10 @@ _PADROES = [
     r"\bnovas? instrucoes\b", r"\bnew instructions?\b",
     r"\bse voce (for|e) (uma? )?(ia|assistente|modelo|llm|agente)\b", r"\bif you are an? (ai|llm|assistant|model)\b",
     r"\bao ler (isto|isso|esta|este)\b", r"\bnao (conte|diga|avise) (ao|para o) usuario\b",
+    # imperativos de manipulação, sem palavra de gatilho
+    r"\brecomend(e|em|a)\b.{0,60}\bunic", r"\binclua? (no|na) relat[óo]rio",
+    r"\bdiga (ao|para o) usu[áa]rio", r"\benvie .{0,40}https?://",
+    r"\bapague (os|todos os|seus) arquivos",
 ]
 _RE = [re.compile(p, re.IGNORECASE | re.DOTALL) for p in _PADROES]
 
@@ -53,9 +67,53 @@ def _normalizar(s):
     return "".join(c for c in s if not _invisivel(c) and not unicodedata.combining(c))
 
 
+# letras de outro alfabeto que se confundem com a latina (a cópia já vem sem acento, de `_normalizar`)
+_CONFUNDIVEIS = str.maketrans(
+    "аеорсухіјѕԁһԛԝкмтвн" "АВЕКМНОРСТХІЈЅ" "αεοιρυχκντ" "ΑΒΕΖΗΙΚΜΝΟΡΤΥΧ",
+    "aeopcyxijsdhqwkmtbh" "ABEKMHOPCTXIJS" "aeoipuxkvt" "ABEZHIKMNOPTYX")
+_LEET = str.maketrans("103457", "ioeast")
+_PALAVRA = re.compile(r"[^\W_]+")
+_SOLETRADO = re.compile(r"(?<![^\W\d_])(?:[^\W\d_][\-._*·|/+~ ]){3,}[^\W\d_](?![^\W\d_])")
+
+
+def _leet(m):
+    p = m.group(0)
+    if any(c.isalpha() for c in p) and any(c.isdigit() for c in p):
+        return p.translate(_LEET)
+    return p
+
+
+def _desdisfarcar(t):
+    """Cópia só para a checagem: confundível vira latino, leet vira letra, soletrado se junta."""
+    t = _PALAVRA.sub(_leet, t.translate(_CONFUNDIVEIS))
+    return _SOLETRADO.sub(lambda m: re.sub(r"[^\w]|_", "", m.group(0)), t)
+
+
+def _marca(c):
+    return unicodedata.category(c)[0] == "M"
+
+
+def _leituras(texto):
+    """As leituras do texto cru: o invisível pode estar dentro da palavra (some) ou no lugar do espaço.
+
+    Quatro combinações, porque marca (categoria M) e os outros invisíveis podem ter papéis trocados:
+    tudo some; tudo vira espaço; só a marca some; só a marca vira espaço.
+    """
+    cru = unicodedata.normalize("NFC", texto)  # acento decomposto volta a ser letra antes de virar espaço
+    vistas = set()
+    for marca_espaco, outro_espaco in ((False, False), (True, True), (False, True), (True, False)):
+        t = "".join((" " if (marca_espaco if _marca(c) else outro_espaco) else "") if _invisivel(c) else c
+                    for c in cru)
+        t = re.sub(r"\s+", " ", _normalizar(t))
+        for leitura in (t, _desdisfarcar(t)):
+            if leitura not in vistas:
+                vistas.add(leitura)
+                yield leitura
+
+
 def suspeito(texto):
-    n = _normalizar(texto)
-    return any(r.search(n) for r in _RE)
+    """Recebe o texto cru: depois de `_limpar` o invisível que fazia de espaço já sumiu."""
+    return any(r.search(n) for n in _leituras(texto) for r in _RE)
 
 
 def _limpar(s):
@@ -70,16 +128,24 @@ def _limpar(s):
     return re.sub(r" {2,}", " ", "".join(out)).strip(), rem
 
 
-def sanear_livre(valor):
+def sanear_livre(valor, teto=None):
     """Texto livre de terceiro fora de ficha (nome, razão social, descrição de API).
 
     Limpa como uma ficha e, se houver padrão de instrução, sai entre aspas com [suspeito]:
-    é dado, não instrução.
+    é dado, não instrução. A marca olha o texto cru inteiro; o teto corta só o que sai.
     """
-    texto, _ = _limpar("" if valor is None else str(valor))
-    if texto and suspeito(texto):
+    cru = "" if valor is None else str(valor)[:TETO_ENTRADA]
+    texto, _ = _limpar(cru)
+    if teto is not None:
+        texto = texto[:teto].rstrip()
+    if texto and (suspeito(cru) or suspeito(texto)):
         return '[suspeito] "%s"' % texto.replace('"', "'")
     return texto
+
+
+def _valor_cru(bruta):
+    """Valor da linha antes de `_limpar`, para a conferência de padrão de instrução."""
+    return bruta.partition(":")[2]
 
 
 def _entre_aspas(v):
@@ -100,13 +166,13 @@ def sanear_ficha(linhas):
         m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$", linha)
         if not m:
             rel["sem_campo"] += 1
-            if suspeito(linha):
+            if suspeito(bruta) or suspeito(linha):
                 rel["suspeitas_descartadas"] += 1
             continue
         nome, valor = m.group(1).lower(), m.group(2).strip()
         if nome not in CAMPOS:
             rel["extras"].append(nome)
-            if suspeito(valor) or suspeito(nome):
+            if suspeito(_valor_cru(bruta)) or suspeito(valor) or suspeito(nome):
                 rel["suspeitas_descartadas"] += 1
             continue
         if nome in campos:
@@ -129,7 +195,7 @@ def sanear_ficha(linhas):
                 rel["invalidos"].append("confianca fora de alta|media|baixa")
                 continue
             valor = _normalizar(valor).lower()
-        sus = suspeito(valor)
+        sus = suspeito(_valor_cru(bruta)) or suspeito(valor)
         if nome == "evidencia":
             valor = _entre_aspas(valor.strip().strip('"“”'))
         if sus:
@@ -143,7 +209,10 @@ def sanear_ficha(linhas):
 
 def dividir_fichas(texto):
     blocos, atual = [], []
-    for l in texto.splitlines():
+    # só \n separa linhas: splitlines() também quebra em U+2028, U+0085 e \x1c-\x1e, e assim
+    # um texto de página forjava uma ficha nova ("---" depois de um separador invisível)
+    for l in texto.split("\n"):
+        l = l.rstrip("\r")
         if l.strip() == "---":
             blocos.append(atual)
             atual = []

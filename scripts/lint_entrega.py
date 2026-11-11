@@ -24,6 +24,10 @@ Varre a entrega inteira e reprova:
       "coleta:";
   (h) texto entre o cabecalho e a primeira secao (so `chave: valor` do
       cabecalho, titulo `# ...` e linhas vazias sao aceitos ali).
+O titulo `# ...` e o valor de cada chave do cabecalho passam por (a), (b),
+(e), (f) e (g) como prosa (aparecem nas mensagens como 'cabeçalho').
+(b), (e) e (g) leem o paragrafo com as linhas reunidas, nao a linha fisica:
+frase quebrada em duas ou tres linhas e pega.
 
 Heuristicas por lista de padroes. Declaradamente NAO pega:
   - adocao ou norma dita com palavras fora das listas (ex.: "o mercado vai
@@ -47,7 +51,11 @@ Heuristicas por lista de padroes. Declaradamente NAO pega:
       e pode esconder afirmacao; nao distingue dado agregado de individual
       alem das palavras-gatilho;
   - em (f), recomendacao sem verbo das listas; "coleta:" e conferido como texto,
-    nao como registro real.
+    nao como registro real; (f) ainda le linha fisica (expressao de duas
+    palavras quebrada na linha, como "vale a / pena", escapa);
+  - em (b), (e) e (g), frase partida por linha em branco, por item de lista ou
+    por linha de tabela nao e reunida; em (g), a negacao e procurada na frase
+    inteira (antes era na linha fisica).
 Prefere falso positivo a falso negativo em (a).
 
 Saida: 0 aprovado, 1 reprovado, 2 uso errado.
@@ -148,14 +156,27 @@ def frases(texto):
     return [f.strip() for f in re.split(r"(?<=[.!?;])\s+(?=[A-ZÀ-Ý0-9\[(\"“])", texto) if f.strip()]
 
 
-def blocos(sec):
+def secao_cabecalho(ent):
+    """Titulo '# ...' e valores do cabecalho como secao de prosa (uma linha por bloco)."""
+    linhas = []
+    for n, txt in rotular.prosa_cabecalho(ent):
+        linhas += [(n, txt), (n, "")]
+    return {"titulo": "cabeçalho", "linha": 1, "linhas": linhas}
+
+
+def secoes_de_prosa(ent):
+    return [secao_cabecalho(ent)] + ent["secoes"]
+
+
+def blocos(sec, com_tabela=False):
     """Blocos de prosa da secao: (linha, texto) por paragrafo/item.
 
     Linha de tabela vira bloco proprio (celulas unidas por espaco), exceto as
-    linhas de Fatos/Numeros que a tabela da secao ja cobre em linhas_tabela."""
+    linhas de Fatos/Numeros que a tabela da secao ja cobre em linhas_tabela;
+    com_tabela=True traz essas tambem (para os lints que nao leem a tabela)."""
     out, buf, ini = [], [], None
     cobertas = set()
-    if sec["titulo"] in ("Fatos", "Números"):
+    if sec["titulo"] in ("Fatos", "Números") and not com_tabela:
         _, rows, _ = rotular.tabela(sec)
         cobertas = {n for n, cels in rows if len(cels) >= 4}
 
@@ -249,7 +270,7 @@ def lint_a(ent, nome, msgs):
             g = gatilhos_adocao(" | ".join(cels[1:]))
             if g:
                 msgs.append(f"{nome}:{n}: (a) '{g[0]}' em linha {rot} da tabela {titulo}: percentual/adoção não pode vir de simulação ou hipótese")
-    for s in ent["secoes"]:
+    for s in secoes_de_prosa(ent):
         tolera = s["titulo"] in (SEC_NAO_PROVA, SEC_LIMITES)
         for n, bloco in blocos(s):
             for fr in frases(bloco):
@@ -272,11 +293,11 @@ def lint_a(ent, nome, msgs):
 
 
 def lint_b(ent, nome, msgs):
-    for s in ent["secoes"]:
+    for s in secoes_de_prosa(ent):
         if s["titulo"] == SEC_PERGUNTAS:
             continue
-        for n, ln in s["linhas"]:
-            t = sem_acento(ln).lower()
+        for n, bloco in blocos(s, com_tabela=True):
+            t = sem_acento(bloco).lower()
             for r in RE_NORMATIVO:
                 m = r.search(t)
                 if m:
@@ -369,11 +390,20 @@ def paragrafos(texto):
     return out
 
 
+def blocos_do_arquivo(ent):
+    """Todo o texto em blocos reunidos: cabecalho, texto solto antes da primeira
+    secao, titulo de cada secao e os paragrafos dela (com as linhas de tabela)."""
+    out = list(blocos(secao_cabecalho(ent)))
+    out += [(n, ln.strip()) for n, ln in rotular.linhas_fora_de_secao(ent)]
+    for s in ent["secoes"]:
+        out.append((s["linha"], s["titulo"]))
+        out += blocos(s, com_tabela=True)
+    return sorted(out, key=lambda b: b[0])
+
+
 def lint_e(ent, texto, nome, msgs):
-    for n, ln in enumerate(texto.splitlines(), 1):
+    for n, ln in blocos_do_arquivo(ent):
         t = sem_acento(ln).lower()
-        if ln.lstrip().startswith("|") and re.match(r"^\|?\s*-", ln.strip()):
-            continue
         for r in RE_CAND:
             m = r.search(t)
             if m:
@@ -390,17 +420,18 @@ def lint_e(ent, texto, nome, msgs):
 
 
 def lint_g(ent, nome, msgs):
-    for s in ent["secoes"]:
+    for s in secoes_de_prosa(ent):
         tolera = s["titulo"] in (SEC_NAO_PROVA, SEC_LIMITES)
-        for n, ln in s["linhas"]:
-            t = sem_acento(ln).lower()
-            if tolera and RE_NEGA_SEG.search(t):
-                continue
-            for r in RE_SEG:
-                m = r.search(t)
-                if m:
-                    msgs.append(f"{nome}:{n}: (g) segmentação por opinião política individual ('{m.group(0)}'): proibido no modo eleitoral, só agregado de fonte pública")
-                    break
+        for n, bloco in blocos(s, com_tabela=True):
+            for fr in frases(bloco):
+                t = sem_acento(fr).lower()
+                if tolera and RE_NEGA_SEG.search(t):
+                    continue
+                for r in RE_SEG:
+                    m = r.search(t)
+                    if m:
+                        msgs.append(f"{nome}:{n}: (g) segmentação por opinião política individual ('{m.group(0)}'): proibido no modo eleitoral, só agregado de fonte pública")
+                        break
 
 
 def lint_f(ent, nome, msgs):
@@ -410,7 +441,7 @@ def lint_f(ent, nome, msgs):
                      for titulo, _, _, rot, fonte in linhas_tabela(ent))
     if tem_coleta:
         return
-    for s in ent["secoes"]:
+    for s in secoes_de_prosa(ent):
         if s["titulo"] in (SEC_PERGUNTAS, SEC_NAO_PROVA, SEC_LIMITES):
             continue
         for n, ln in s["linhas"]:

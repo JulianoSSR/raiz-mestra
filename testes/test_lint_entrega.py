@@ -182,5 +182,110 @@ class TestLintEntrega(unittest.TestCase):
         self.assertEqual(roda([str(FIX / "boas" / "entrega-exemplo.md"), "--pesquisa"])[0], 2)
 
 
+    # ---- G6: V-2, A-3, A-4, A-8 -----------------------------------------
+    def _troca(self, a, b, base=None):
+        base = self._base() if base is None else base
+        self.assertEqual(base.count(a), 1, a)
+        return base.replace(a, b)
+
+    def test_segundo_titulo_passa_pelos_lints_de_prosa(self):
+        # V-2: '# Recomendamos ... 80% dos clientes vao comprar' numa entrega E3
+        rc, out = roda([str(FIX / "ruins" / "titulo-com-adocao.md")])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("titulo-com-adocao.md:7: (a) '80%' sem apontar", out)
+        self.assertIn("(f) tamanho E3 com recomendação em 'cabeçalho'", out)
+
+    def test_titulo_e_empreitada_passam_pelos_lints_de_prosa(self):
+        # A-3
+        for nome, linha in (("titulo-unico-com-adocao", 6), ("cabecalho-com-adocao", 1)):
+            with self.subTest(nome):
+                rc, out = roda([str(FIX / "ruins" / f"{nome}.md")])
+                self.assertEqual(rc, 1, out)
+                self.assertIn(f"{nome}.md:{linha}: (a) '70%' sem apontar", out)
+
+    def test_frase_normativa_no_cabecalho_reprova(self):
+        # A-3: (b) tambem vale para titulo e valores do cabecalho
+        casos = (
+            ("empreitada: Assinatura semanal de pães na Padaria Exemplo (fictícia)", "empreitada: Padaria; você deve abrir um MEI e a lei exige alvará"),
+            ("# Entrega: assinatura semanal de pães", "# Entrega: basta abrir MEI"),
+            ("data: 2026-03-10", "data: 2026-03-10, e a lei exige alvará"),
+        )
+        for a, b in casos:
+            with self.subTest(b):
+                rc, out = roda([self._escreve(self._troca(a + "\n", b + "\n"))])
+                self.assertEqual(rc, 1, out)
+                self.assertIn("(b) frase normativa", out)
+
+    def test_frase_normativa_quebrada_em_linhas_reprova(self):
+        # A-4: 'voce deve / abrir um MEI e a lei / exige alvara'
+        rc, out = roda([str(FIX / "ruins" / "frase-normativa-quebrada.md")])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("(b) frase normativa", out)
+        self.assertEqual(rotular.valida((FIX / "ruins" / "frase-normativa-quebrada.md").read_text(encoding="utf-8"), "x"), [])
+
+    def test_segmentacao_quebrada_em_linhas_reprova(self):
+        # A-4: 'lista de / simpatizantes ... segmentar por / opiniao politica'
+        rc, out = roda([str(FIX / "ruins" / "eleitoral-segmentacao-quebrada.md")])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("(g) segmentação por opinião política individual ('lista de simpatizantes')", out)
+
+    def test_candidatura_quebrada_em_linhas_reprova(self):
+        # A-4: 'recomenda a / candidatura dela, que tem intencao de / voto alta'
+        rc, out = roda([str(FIX / "ruins" / "eleitoral-candidatura-quebrada.md")])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("(e) recomendação de candidatura ou voto", out)
+        self.assertIn("(e) percentual/contagem de voto", out)
+
+    def test_normativa_em_linha_de_tabela_de_fatos_continua_reprovando(self):
+        # A-4: juntar frases nao pode tirar as linhas de Fatos/Numeros de (b), (e) e (g)
+        t = self._troca("| F1 | O dono vende 180 pães por dia no balcão |", "| F1 | O dono vende 180 pães por dia e a lei exige alvará |")
+        rc, out = roda([self._escreve(t)])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("(b) frase normativa", out)
+        el = (FIX / "boas" / "eleitoral-ok.md").read_text(encoding="utf-8")
+        t = self._troca("| F1 | O dono vende 180 pães por dia no balcão |", "| F1 | O dono tem a lista de simpatizantes do partido |", el)
+        rc, out = roda([self._escreve(t)])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("(g)", out)
+        t = self._troca("| F1 | O dono vende 180 pães por dia no balcão |", "| F1 | Vote em Ana Teste |", el)
+        rc, out = roda([self._escreve(t)])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("(e) recomendação", out)
+
+    def test_titulo_de_secao_continua_em_e(self):
+        # A-4: (e) lia o arquivo inteiro; o titulo '## ...' nao pode sair da varredura
+        el = (FIX / "boas" / "eleitoral-ok.md").read_text(encoding="utf-8")
+        rc, out = roda([self._escreve(el + "\n## Vote em Ana Teste\n\nTexto qualquer aqui.\n")])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("(e) recomendação", out)
+
+    def test_negacao_so_desculpa_adocao_em_nao_prova_e_limites(self):
+        # A-8: a tolerancia de (a) por negacao nao vale nas outras secoes
+        for sec in ("Conceitos", "Pré-mortem", "Próximo teste real", "Perguntas para o profissional"):
+            with self.subTest(sec):
+                t = self._troca(f"## {sec}\n\n", f"## {sec}\n\nNão há dúvida de que a maioria compraria.\n\n")
+                rc, out = roda([self._escreve(t)])
+                self.assertEqual(rc, 1, out)
+                self.assertIn("(a) 'a maioria'", out)
+
+    def test_normativa_reprova_em_toda_secao_menos_perguntas(self):
+        # A-8: (b) nao vale so em Conceitos
+        for sec in ("Pré-mortem", "Próximo teste real", "O que isto não prova", "Limites desta análise"):
+            with self.subTest(sec):
+                t = self._troca(f"## {sec}\n\n", f"## {sec}\n\nA lei exige alvará para entrega.\n\n")
+                rc, out = roda([self._escreve(t)])
+                self.assertEqual(rc, 1, out)
+                self.assertIn("(b) frase normativa", out)
+        t = self._troca("## Perguntas para o profissional\n\n", "## Perguntas para o profissional\n\nA lei exige alvará para entrega?\n\n")
+        self.assertEqual(roda([self._escreve(t)])[0], 0)
+
+    def test_oito_palavras_iguais_reprova(self):
+        # A-8: o limiar de (c) e 8 palavras, nao 12
+        t = self._troca("Conceito a abandonar", "Comércio varejista de pequeno porte costuma operar com. Conceito a abandonar")
+        rc, out = roda([self._escreve(t), "--pesquisa", str(PESQUISA)])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("(c) trecho copiado", out)
+
+
 if __name__ == "__main__":
     unittest.main()

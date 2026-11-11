@@ -20,17 +20,30 @@ def _frontmatter(linhas):
     return None, 0
 
 
+BLOCO = re.compile(r"^[|>][+-]?\d?[+-]?$")
+
+
 def _chaves(fm):
-    """Chaves de nível 0 e valores simples (sem YAML completo)."""
+    """Chaves de nível 0 e seus valores (sem YAML completo).
+
+    O valor inclui as linhas recuadas que vêm depois da chave: bloco `|` ou `>` e
+    texto continuado na linha seguinte. O tamanho conta o texto sem o recuo.
+    """
     out = {}
+    chave = None
     for n, l in enumerate(fm, 2):
-        if not l.strip() or l.startswith((" ", "\t", "#", "-")):
+        if l.startswith((" ", "\t")) or not l.strip():
+            if chave and l.strip():
+                out[chave][0].append(l.strip())
             continue
-        if ":" not in l:
+        chave = None
+        if l.startswith(("#", "-")) or ":" not in l:
             continue
         k, v = l.split(":", 1)
-        out[k.strip()] = (v.strip().strip("\"'"), n)
-    return out
+        chave = k.strip()
+        v = v.strip()
+        out[chave] = ([] if BLOCO.match(v) else [v], n)
+    return {k: (" ".join(p for p in partes if p).strip("\"'"), n) for k, (partes, n) in out.items()}
 
 
 def validar(pasta):

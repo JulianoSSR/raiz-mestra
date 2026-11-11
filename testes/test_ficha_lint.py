@@ -1,5 +1,6 @@
 import io
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -126,6 +127,100 @@ class TestFichaLint(unittest.TestCase):
 
     def test_dona_nome_em_maiusculo_da_exit_1(self):
         self.assertEqual(rodar(RUINS, "ficha-dona-maiuscula.md")[0], 1)
+
+    # R-4 (regressão): texto comum de arquétipo não pode reprovar nem pedir revisão.
+    LEGITIMAS = (
+        "Valoriza o seu atendimento rápido.",
+        "Seu concorrente cobra menos e entrega depois.",
+        "Professora aposentada, mora com a filha.",
+        "Professor universitário, dá aula à noite.",
+        "A dona não quer mensalidade.",
+        "O sr. fiscal aparece uma vez por ano.",
+        "Diretora de compras de uma rede de mercados.",
+        "Presidente da associação de moradores do bairro.",
+        "Síndico do prédio, cuida das contas do condomínio.",
+        "Secretária da escola, faz as matrículas.",
+        "Diretor da empresa, decide junto com o sócio.",
+        "Dona de pequena padaria de bairro, abre antes das seis.",
+        "Promotora de vendas em supermercado.",
+        "Pastor de uma igreja de bairro, cuida das finanças.",
+    )
+    CABECALHO = "origem: arquetipo\nconsentimento: nao se aplica\n\n## Contexto de vida e trabalho\n"
+
+    def _avulsa(self, frase, *extra, cabecalho=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "f.md").write_text((cabecalho or self.CABECALHO) + frase + "\n",
+                                            encoding="utf-8")
+            return rodar(Path(tmp), "f.md", *extra)
+
+    def test_fichas_legitimas_aprovam_sem_revisao_e_sem_aviso(self):
+        for frase in self.LEGITIMAS:
+            with self.subTest(frase=frase):
+                c, s = self._avulsa(frase)
+                self.assertEqual(c, 0, s)
+                self.assertNotIn("AVISO", s)
+
+    def test_fichas_legitimas_aprovam_em_modo_eleitoral(self):
+        for frase in self.LEGITIMAS:
+            with self.subTest(frase=frase):
+                c, s = self._avulsa(frase, "--eleitoral")
+                self.assertEqual(c, 0, s)
+
+    def test_fixtures_boas_da_regressao_aprovam_sem_aviso(self):
+        for nome in ("ficha-seu-atendimento.md", "ficha-professora-aposentada.md",
+                     "ficha-diretora-de-compras.md"):
+            for extra in ((), ("--eleitoral",)):
+                with self.subTest(nome=nome, extra=extra):
+                    c, s = rodar(BOAS, nome, *extra)
+                    self.assertEqual(c, 0, s)
+                    self.assertNotIn("AVISO", s)
+
+    def test_seis_casos_do_resina_seguem_reprovando(self):
+        casos = (("O prefeito do Crato decide a compra.", ()),
+                 ("prefeito de sobral decide a compra.", ()),
+                 ("Vereadora por Sobral.", ("--eleitoral",)),
+                 ("O prefeito do Crato é evangélico e vota no PT.", ("--eleitoral",)),
+                 ("A dona maria da padaria abre cedo.", ()),
+                 ("DONA MARIA da padaria abre cedo.", ()))
+        for frase, extra in casos:
+            with self.subTest(frase=frase):
+                self.assertEqual(self._avulsa(frase, *extra)[0], 1)
+
+    def test_dona_nome_minusculo_revisado_vira_aviso_mas_nao_em_modo_eleitoral(self):
+        cab = self.CABECALHO.replace("\n\n", "\nidentificacao_indireta_revisada: sim\n\n", 1)
+        c, s = self._avulsa("A dona maria da padaria abre cedo.", cabecalho=cab)
+        self.assertEqual(c, 0, s)
+        self.assertIn("AVISO", s)
+        self.assertEqual(self._avulsa("A dona maria da padaria abre cedo.", "--eleitoral",
+                                      cabecalho=cab)[0], 1)
+
+    def test_tratamento_com_nome_comum_em_minusculo_reprova(self):
+        # volta a pegar: lista de nomes comuns, depois de seu/dr./sr. etc.
+        for frase in ("seu joão decide a compra.", "dr. carlos assina o contrato.",
+                      "sra. ana paga à vista."):
+            with self.subTest(frase=frase):
+                c, s = self._avulsa(frase)
+                self.assertEqual(c, 1, s)
+
+    def test_tratamento_minusculo_sem_nome_da_lista_passa(self):
+        # sem falso positivo em frase comum com "seu"/"dr."
+        for frase in ("Valoriza o seu atendimento rápido.", "seu foco é o preço."):
+            with self.subTest(frase=frase):
+                c, s = self._avulsa(frase)
+                self.assertEqual(c, 0, s)
+
+    def test_tratamento_com_nome_comum_revisado_vira_aviso(self):
+        cab = self.CABECALHO.replace("\n\n", "\nidentificacao_indireta_revisada: sim\n\n", 1)
+        c, s = self._avulsa("seu joão decide a compra.", cabecalho=cab)
+        self.assertEqual(c, 0, s)
+        self.assertIn("AVISO", s)
+        self.assertEqual(self._avulsa("seu joão decide a compra.", "--eleitoral", cabecalho=cab)[0], 1)
+
+    def test_cargo_publico_colado_a_cidade_minuscula_reprova(self):
+        for frase in ("a vereadora por sobral decide.", "o delegado de quixadá assina.",
+                      "juíza em crato despacha."):
+            with self.subTest(frase=frase):
+                self.assertEqual(self._avulsa(frase)[0], 1)
 
 
 if __name__ == "__main__":

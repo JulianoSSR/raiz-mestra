@@ -147,7 +147,25 @@ class TestLimpeza(unittest.TestCase):
             with self.subTest(end=end):
                 _, out, _ = self.rodar("Entregar na %s amanhã." % end)
                 self.assertNotIn(end, out)
+                self.assertNotIn("Maio", out)
+                self.assertNotIn("Setembro", out)
                 self.assertIn("[endereco removido]", out)
+
+    # R-5: o lookahead do nome numérico não pode deixar passar endereço seguido de "de".
+    def test_endereco_seguido_de_preposicao_continua_saindo(self):
+        for frase in ("Mora na Rua das Flores, 123 de frente para a praça.",
+                      "Fica na Av. Central 45 do lado do banco."):
+            with self.subTest(frase=frase):
+                _, out, _ = self.rodar(frase)
+                self.assertNotIn("Flores", out)
+                self.assertNotIn("Central", out)
+                self.assertIn("[endereco removido]", out)
+
+    # R-5 (CEP): LIMITE DECLARADO. Oito dígitos seguidos viram CEP, inclusive data AAAAMMDD.
+    def test_limitacao_conhecida_data_de_oito_digitos_vira_cep(self):
+        _, out, _ = self.rodar("Arquivo de 20261109, protocolo 2026.")
+        self.assertIn("[cep removido]", out)
+        self.assertIn("2026.", out)
 
     # R-6: lista em NFD e caractere de largura zero não podem escapar da troca.
     def test_lista_em_nfd_troca_o_nome(self):

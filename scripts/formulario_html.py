@@ -4,14 +4,31 @@
 Uso: formulario_html.py <formulario.md> <saida.html>
 Lê a parte "# Formulário para o público" do molde (ou o arquivo todo, se não houver).
 Perguntas: `N. [unica|multipla|texto] Pergunta | opção | opção`.
+
+Pergunta (ou opção) que pede nome da pessoa, CPF, telefone, e-mail ou endereço reprova,
+e a página não é gerada. A conferência é por lista de palavras: não pega pedido escrito
+de outro jeito ("como te encontro?", "RG", "onde você mora?") e reprova também a pergunta
+que só cita a palavra ("não escreva seu telefone"). O campo de texto livre continua
+aceitando o que a pessoa digitar.
 """
 import html
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 SECAO = "# Formulário para o público"
 PERGUNTA = re.compile(r"^\s*\d+\.\s*\[(unica|multipla|texto)\]\s*(.+?)\s*$")
+
+# Casados contra o texto em minúsculas e sem acento.
+DADO_PESSOAL = (
+    ("nome", re.compile(r"\bnome completo\b|\bsobrenome\b|\b(?:seu|teu) nome\b|\bnome d[eo] (?:voce|senhora?)\b"
+                        r"|\bcomo (?:voce |o senhor |a senhora )?se chama\b")),
+    ("CPF", re.compile(r"\bcpf\b")),
+    ("telefone", re.compile(r"\btelefones?\b|\bcelular(?:es)?\b|\bwhats\s?app\b|\bzap\b")),
+    ("e-mail", re.compile(r"\be-?mails?\b")),
+    ("endereço", re.compile(r"\benderecos?\b|\bcep\b")),
+)
 
 CSS = (
     "body{font-family:sans-serif;max-width:40rem;margin:1rem auto;padding:0 1rem;line-height:1.4}"
@@ -48,6 +65,27 @@ def _secao_publica(texto):
         if l.strip() == SECAO:
             return linhas[i + 1:]
     return linhas
+
+
+def _sem_acento(t):
+    return "".join(c for c in unicodedata.normalize("NFD", t)
+                   if unicodedata.category(c) != "Mn").lower()
+
+
+def dados_pessoais(texto):
+    """Devolve [(linha, [dado])] das perguntas da parte pública que pedem dado pessoal."""
+    todas = texto.splitlines()
+    publica = _secao_publica(texto)
+    desloc = len(todas) - len(publica)
+    achados = []
+    for i, l in enumerate(publica, desloc + 1):
+        if not PERGUNTA.match(l):
+            continue
+        plano = _sem_acento(l)
+        pedidos = [nome for nome, pad in DADO_PESSOAL if pad.search(plano)]
+        if pedidos:
+            achados.append((i, pedidos))
+    return achados
 
 
 def analisar(texto):
@@ -132,6 +170,12 @@ def main(argv=None) -> int:
     _, blocos = analisar(texto)
     if not any(b[1] for b in blocos):
         print("%s: nenhuma pergunta no formato 'N. [unica|multipla|texto] ...'" % entrada)
+        return 1
+    pedem = dados_pessoais(texto)
+    for n, pedidos in pedem:
+        print("%s:%d: pergunta pede dado pessoal (%s); tire a pergunta. Página não gerada."
+              % (entrada, n, ", ".join(pedidos)))
+    if pedem:
         return 1
     saida.write_text(gerar(texto), encoding="utf-8")
     print("%s: página gerada" % saida)

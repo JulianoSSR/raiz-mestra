@@ -6,7 +6,10 @@ Uso: pseudonimizar.py <entrada.txt> <saida.txt> --nomes <lista.txt> [--dossie SL
 Duas etapas, nesta ordem:
   1. Cada nome da lista do usuário vira um código estável (P01, P02...). O mapa
      nome->código fica SÓ na pasta de dados do dossiê, nunca na saída.
-  2. Limpeza heurística: CPF, e-mail, telefone, CEP e endereço com número.
+  2. Limpeza heurística: CPF, e-mail (também "fulano (at) dominio.com", "[at]", "arroba" e
+     "(arroba)" entre usuário e domínio), telefone, CEP, endereço com número e endereço de
+     quadra (SQS 308, QNM 17 Conjunto H Casa 22, Bloco C, Bl. C apt 201, apto 201,
+     Quadra 5 Lote 12, Qd. 5 Lt. 12).
 
 DECLARADAMENTE NÃO PEGA (a limpeza é por padrão, não é garantia):
   - endereço por extenso sem número ("a rua atrás da igreja matriz");
@@ -14,9 +17,23 @@ DECLARADAMENTE NÃO PEGA (a limpeza é por padrão, não é garantia):
     (ex.: "Zezé" quando a lista tem "José");
   - telefone de 10 dígitos sem nenhuma pontuação ou prefixo;
   - número bruto de 11 dígitos: é tratado como CPF, mesmo que seja telefone;
+  - e-mail disfarçado de outro jeito ("fulano em dominio ponto com", "(dot)", "fulano at
+    dominio.com", "fulano @ dominio.com"), "arroba" antes de domínio que começa por "www." e
+    "arroba" depois de usuário com letra acentuada ("joão arroba gmail.com");
+  - "casa 12" sozinho ou depois de condomínio sem número ("Condomínio Bela Vista, casa 12"),
+    "Quadra 5 Casa 12", "Quadra B Lote 12", sigla de quadra em minúscula ou com hífen
+    ("sqs 308", "SQS-308"), e "apartamento nº 201" fora de um endereço de bloco ou quadra;
+  - fixo sem DDD cujos dois blocos parecem ano (2020-1999): fica no texto, para que
+    intervalo de anos ("2019-2023") não vire telefone;
   - placa de veículo, RG, título de eleitor, conta bancária, data de nascimento;
   - descrição física e identificação por combinação de detalhes;
   - CNPJ: não é removido de propósito (é dado de empresa, não de pessoa).
+REMOVE A MAIS, de propósito: "Vila", "Campo", "Ponte" e os outros logradouros seguidos de
+número em até sete palavras saem como endereço ("Campo de futebol com 11 jogadores"), e
+"QI 120", "QE 40", "Bloco A", "bloco 12", "bloco c" e "Lt 12" saem mesmo quando não são
+endereço ("vende bloco b inteiro"). "Bloco" seguido de a, e ou o minúsculos fica ("bloco a
+bloco"). "Apartamento 2" sai quando a palavra seguinte não é quartos, suítes, dormitórios,
+vagas, banheiros ou cômodos ("Apartamento 2 salas amplas" sai).
 O texto que você colou na conversa já foi enviado ao provedor do modelo.
 """
 import argparse
@@ -35,23 +52,61 @@ AVISO = ("Limpeza por padrão: não é garantia. O texto que você colou na conv
          "já foi enviado ao provedor do modelo.")
 
 EMAIL = re.compile(r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
+# E-mail disfarçado: "fulano (at) dominio.com", "fulano [at] dominio.com", "fulano arroba dominio.com".
+# Fica fora de EMAIL de propósito: EMAIL continua casando só com um "@".
+# "arroba" por extenso só vale entre usuário e domínio com letras depois do último ponto:
+# "Cotação da arroba 310.50" (número solto) e "símbolo arroba www.site.com" (site) ficam.
+EMAIL_DISFARCADO = re.compile(
+    r"[\w.+\-]+[ \t]*(?:\(at\)|\[at\])[ \t]*[\w\-]+(?:\.[\w\-]+)+"
+    r"|(?<![\w.+\-])[A-Za-z0-9._+\-]+"
+    r"(?:[ \t]+arroba[ \t]+|[ \t]*(?:\(arroba\)|\[arroba\])[ \t]*)"
+    r"(?!www\.)[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}(?![\w])",
+    re.IGNORECASE)
 # CPF com separador opcional (ponto, espaço, barra, hífen). CNPJ não casa: 2 + 3 + 3 + 4 + 2.
-CPF = re.compile(r"(?<![\d/])\d{3}[ .]?\d{3}[ .]?\d{3}[ \t]*[-/.]?[ \t]*\d{2}(?!\d)")
-# CEP com ou sem hífen e com ou sem ponto. Oito dígitos seguidos também casam.
-CEP = re.compile(r"(?<!\d)\d{2}\.?\d{3}-?\d{3}(?!\d)")
+CPF = re.compile(r"(?<![\d/])\d{3}[ .\-]?\d{3}[ .\-]?\d{3}[ \t]*[-/.]?[ \t]*\d{2}(?!\d)")
+# CEP com ou sem hífen, espaço ou ponto. Oito dígitos seguidos também casam.
+CEP = re.compile(r"(?<!\d)\d{2}\.?\d{3}[ \-]?\d{3}(?!\d)")
 TELEFONE = re.compile(
     r"(?<!\d)(?:"
     # DDD com parênteses ou separador, depois 9 solto ou não, e os dois blocos de 4
     r"(?:\+?55[ .\-]?)?(?:\(\d{2}\)[ ]?|\d{2}[ .\-])9?[ .\-]?\d{4}[ .\-]?\d{4}"
     r"|9\d{4}[ .\-]?\d{4}"                                  # 99999 0000 (celular sem DDD)
-    r"|\d{4}-\d{4}"                                         # 9999-0000 (fixo sem DDD)
+    # 9999-0000 ou 9999 0000 (fixo sem DDD); dois anos seguidos ("2019-2023") são intervalo
+    r"|(?!(?:19|20)\d\d[ \-](?:19|20)\d\d(?!\d))\d{4}[ \-]\d{4}"
+    r"|(?:\+|wa\.me/)55\d{10,11}"                           # +5585999990000 e wa.me/5585...
+    r"|0800[ .\-]?\d{3}[ .\-]?\d{4}"                        # 0800 123 4567
     r")(?!\d)")
 _LOGRADOURO = (r"(?:Rua|R\.|Avenida|Av\.?|Travessa|Trav\.|Tv\.|Alameda|Al\.|Pra[çc]a|"
-               r"Estrada|Rodovia|Rod\.|Largo|Beco)")
+               r"Estrada|Rodovia|Rod\.|Largo|Beco|Ladeira|Vila|Viela|Ponte|Campo|"
+               r"Ch[áa]cara|Condom[íi]nio)")
 # Palavras do nome podem começar por dígito ("Rua 7 de Setembro, 45").
+_ATE_O_NUMERO = (r"(?<![\w])" + _LOGRADOURO + r"\s+(?:[\w'.\-]+\s+){0,6}?[\w'.\-]+"
+                 r"\s*,?\s*(?:n(?:[º°o]|[úu]mero)\.?\s*)?")
+_NUMERO = r"(?:\d{1,5}[A-Za-z]?(?![\w])%s|km\s*\d+(?:[.,]\d+)?|s/n(?![\w]))"
+# Primeiro tenta o número que não é seguido de "de/do/da": em "Rua 13 de Maio, 200" o 13
+# é nome da rua, não número da casa. Se assim não casar ("Rua das Flores, 123 de frente"),
+# vale o número mesmo seguido de preposição.
+# Endereço de quadra (Brasília e loteamentos), que não tem logradouro + número. As siglas
+# só valem em maiúsculas: "qi" e "ql" minúsculos aparecem em texto comum.
+# "Apartamento 2 quartos" é anúncio, não endereço.
+_NAO_COMODO = r"(?![\w])(?!\s+(?:quartos?|su[íi]tes?|dormit[óo]rios?|vagas?|banheiros?|c[ôo]modos?)(?![\w]))"
+# "Bloco" com letra: maiúscula isolada ("Bloco C") ou minúscula que não seja a, e, o
+# ("bloco c."); assim "bloco a bloco", "bloco e cada" e "bloco a ser" ficam. Com número, sempre.
+_PECA_QUADRA = (r"(?:(?-i:SQS|SQN|CLN|CLS|QNM|QNN|QNL|QE|QS|QI|QD|QL|QR)[ \t]*\d{1,4}(?![\w])"
+                r"(?:\s+(?:Conjunto|Casa|Lote)\s+(?:\d{1,4}|(?-i:[A-Z]))(?![\w]))*"
+                r"|Quadra\s+\d{1,4}\s*,?\s*Lote\s+\d{1,4}(?![\w])"
+                r"|(?:Qd|Lt)\.?\s*\d{1,4}(?![\w])"
+                r"|Bloco\s+(?:\d{1,4}|(?-i:[A-Zb-df-np-z]))(?![\w])"
+                r"|(?-i:B[Ll])\.?\s*(?-i:[A-Z])(?![\w])"
+                r"|ap(?:to|artamento)\.?\s*\d{1,5}" + _NAO_COMODO + r")")
+# só valem coladas a uma peça anterior: "Bloco 12 ap. 34", "Bl. C apt 201", "Bloco C apartamento nº 201"
+_PECA_SEGUINTE = (r"(?:" + _PECA_QUADRA
+                  + r"|(?:ap(?:to?|artamento)?\.?\s*(?:n[º°]\.?\s*)?|n[º°]\.?\s*)\d{1,5}" + _NAO_COMODO + r")")
+# peças vizinhas ("SQS 308 Bloco C apto 201") saem numa marca só
+_QUADRA = r"(?<![\w])" + _PECA_QUADRA + r"(?:[\s,]+" + _PECA_SEGUINTE + r")*"
 ENDERECO = re.compile(
-    r"(?<![\w])" + _LOGRADOURO + r"\s+(?:[\w'.\-]+\s+){0,6}?[\w'.\-]+"
-    r"\s*,?\s*(?:n[º°o]\.?\s*)?(?:\d{1,5}[A-Za-z]?(?![\w])|km\s*\d+(?:[.,]\d+)?|s/n(?![\w]))",
+    _ATE_O_NUMERO + _NUMERO % r"(?!\s+d[eao]s?\s)" + "|" + _ATE_O_NUMERO + _NUMERO % ""
+    + "|" + _QUADRA,
     re.IGNORECASE)
 
 # ordem importa: e-mail antes de tudo; CPF antes de telefone; CEP antes de telefone
@@ -148,9 +203,12 @@ def trocar_nomes(texto, nomes, mapa, avisos=None):
 def limpar(texto):
     """Limpeza heurística. Devolve (texto, contagem por tipo)."""
     contagem = {}
+    # rótulo próprio ("e-mail"), mas a contagem soma na chave "email"
+    texto, disfarcados = EMAIL_DISFARCADO.subn("[e-mail removido]", texto)
     for nome, padrao in ETAPAS:
         texto, n = padrao.subn("[%s removido]" % nome, texto)
         contagem[nome] = n
+    contagem["email"] += disfarcados
     return texto, contagem
 
 

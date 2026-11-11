@@ -78,10 +78,14 @@ Estes limites foram medidos na revisão de 2026-11-10 e continuam abertos. Cada 
 - **Gravação concorrente.** Dois comandos ao mesmo tempo no mesmo dossiê podem perder uma alteração. Uso sequencial não corre esse risco.
 - **Ficha em lote sem teto.** `ler_ficha.py` não limita o número de fichas; a saída pode ser grande.
 
-- **Ficha com falso alarme mais amplo.** Com cargo no texto, preposição seguida de palavra de três letras ou mais conta como cidade. Ficha legítima com revisão marcada pode ser reprovada.
+- **Cargo + cidade tem falso alarme.** Cidade conta em qualquer lugar pelo nome de capital ou pelo formato "de/em <Capitalizada>"; em minúsculo, só colada a cargo público ("prefeito de sobral"). Por isso "Secretário de Saúde" casa como cargo + cidade. Na ficha comum a saída é marcar `identificacao_indireta_revisada: sim`; em `--eleitoral` é tirar um dos dois.
+- **Tratamento em minúsculo só pega nome da lista.** "seu joão" e "dr. carlos" são pegos porque estão em `NOMES_COMUNS`; nome comum fora dessa lista em minúsculo passa sem marca. A lista não é completa.
 - **Datas e números de oito dígitos viram CEP.** `20261109` sai como `[cep removido]`. Telefone de dez dígitos sem pontuação não é pego.
 - **Razão social de empresário individual não sai.** MEI, EI e EIRELI saem sem nome na saída e no cache, de propósito; sociedades e órgãos mantêm o nome. A tabela de naturezas jurídicas foi escrita sem conferir na fonte oficial (CONCLA), e os testes usam servidor local com códigos inventados.
-- **Texto livre de API só é saneado nos campos listados.** Nome fantasia, razão social, nome e descrição do TSE e pacotes. Descrições do IBGE continuam cruas, porque são catálogo oficial.
+- **Texto da API passa pelo filtro de instrução e pelo teto de tamanho nos campos que a skill lê** (IBGE, BCB, BrasilAPI, TSE e pacotes). Número passa como número; objeto ou lista no lugar de texto sai vazio. Chave de série do IBGE sai só se for período numérico (4 a 8 dígitos).
+- **Cache de 24 h da versão anterior.** Quem atualizou a skill deve apagar a pasta `cache_publico` (fica na pasta de dados). Até apagar, o cache gravado antes desta correção pode devolver campos sem o filtro, por até 24 h.
+- **Nome com apóstrofo reto não troca apóstrofo tipográfico.** "D'Ávila" na lista não casa "D’Ávila" no texto; o aviso de "nome não apareceu" sai.
+- **LTDA não leva razão social nem nome fantasia.** Decisão do usuário, em 2026-11-11: a razão social de LTDA costuma trazer o nome do sócio. Quem precisar do nome da empresa consulta a fonte oficial e cita com a fonte. Sociedade individual de advocacia (2321) também não leva. Outras sociedades e órgãos mantêm o nome.
 - **Prazo de leitura não cobre o cabeçalho HTTP.** Servidor que goteja só os cabeçalhos depende do timeout por operação (15 s).
 - **Pastas que já existem com outra permissão não são corrigidas.** As permissões 0o700 valem para pastas criadas pela skill a partir desta versão.
 
@@ -92,10 +96,14 @@ Estes limites foram medidos na revisão de 2026-11-10 e continuam abertos. Cada 
 - **Previsão dita com outras palavras**, fora das listas de expressões.
 - **Parecer jurídico dito de forma incomum** e recomendação implícita.
 - **Cópia por paráfrase ou tradução**; só trecho de oito palavras iguais é detectado.
-- **Dado pessoal fora do padrão:** apelido, endereço por extenso sem número, profissão rara em cidade pequena, descrição física, nome que você não listou, RG, placa, data de nascimento.
-- **Instrução maliciosa reformulada** em página lida: o filtro reconhece padrões conhecidos.
+- **Dado pessoal fora do padrão:** apelido, endereço por extenso sem número, profissão rara em cidade pequena, descrição física, nome que você não listou, RG, placa, data de nascimento. Endereço de Brasília (SQS, quadra, lote) e e-mail com "(at)", "[at]" ou "arroba" saem desde a versão de 2026-11-11.
+- **Instrução maliciosa reformulada** em página lida: o filtro reconhece padrões conhecidos, mais letras de outro alfabeto, separadores entre letras e leet nos casos comuns. Reformulação fora dessas construções passa sem marca. A saída real é o agente leitor isolado, cujo ensaio ainda não foi executado.
+- **Rótulos diferentes para e-mail.** E-mail disfarçado sai como `[e-mail removido]`; o comum continua `[email removido]`.
+- **Remoção a mais em endereço.** "Vila", "Campo" ou "Ponte" seguidos de número em até sete palavras saem como endereço ("Campo de futebol com 11 jogadores"). "QI 120" e "Bloco A" saem mesmo fora de endereço. "Bloco" minúsculo seguido de letra que não seja a, e ou o também sai ("vende bloco b inteiro"). "Apartamento" seguido de número só fica se a palavra seguinte estiver numa lista fechada (quartos, suítes, dormitórios, vagas, banheiros, cômodos): "Apartamento 2 salas amplas" sai.
+- **E-mail disfarçado que não sai.** "arroba" com letra acentuada antes ("joão arroba gmail.com") e domínio que começa por "www." ficam como estão.
+- **Marca a mais em instrução.** Texto legítimo em russo ou grego, código com dígito, e frases honestas com "Recomenda ... única" ou "Diga ao usuário" podem sair com `[suspeito]`.
 
-Onde erram por excesso, geram falso alarme; onde erram por falta, deixam passar casos como os listados acima. Exemplos de falso alarme: todo número de onze dígitos é tratado como CPF, "partido" e "PL" disparam alerta de opinião política, e um dado público com percentual de votos é barrado em empreitada eleitoral.
+Onde erram por excesso, geram falso alarme; onde erram por falta, deixam passar casos como os listados acima. Exemplos de falso alarme: todo número de onze dígitos é tratado como CPF, "partido" e "PL" disparam alerta de opinião política, e um dado público com percentual de votos é barrado em empreitada eleitoral. Intervalo de anos ("2019-2023") não é mais telefone, mas um fixo real com cara de ano ("2020-1999") deixa de ser removido. Uma linha inteira entre parênteses sem dois-pontos nem número é tratada como orientação do modelo, mesmo que seja conteúdo ("(Nas férias quem decide é o sócio.)"). Marcar `identificacao_indireta_revisada: sim` não libera essa linha; a saída é reescrevê-la sem parênteses.
 
 ## Referências legais
 

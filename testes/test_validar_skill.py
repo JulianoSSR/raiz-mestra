@@ -62,6 +62,30 @@ class TestValidarSkill(unittest.TestCase):
         self.assertTrue(any("description" in e for e in erros))
         self.assertTrue(any("compatibility" in e for e in erros))
 
+    def test_description_em_bloco_acima_do_limite_reprova(self):
+        linha = "  " + "palavra " * 9 + "fim\n"  # 2 de recuo + 75 caracteres + quebra
+        for marca in ("|", ">", "|-", ">+"):
+            with self.subTest(marca=marca):
+                p = self.skill("a", "---\nname: a\ndescription: %s\n%slicense: MIT\n---\ncorpo\n" % (marca, linha * 38))
+                erros = validar_skill.validar(p)
+                self.assertTrue(any("description com" in e and "limite 1024" in e for e in erros), erros)
+
+    def test_description_de_2870_caracteres_em_bloco_reprova(self):
+        p = self.skill("a", "---\nname: a\ndescription: |\n  %s\n---\n" % ("d" * 2870))
+        self.assertTrue(any("description com 2870 caracteres" in e for e in validar_skill.validar(p)))
+
+    def test_description_continuada_em_linha_recuada_conta_inteira(self):
+        p = self.skill("a", "---\nname: a\ndescription: comeca aqui\n  %s\n---\n" % ("d" * 1100))
+        self.assertTrue(any("description com" in e for e in validar_skill.validar(p)))
+
+    def test_description_em_bloco_dentro_do_limite_passa(self):
+        p = self.skill("a", "---\nname: a\ndescription: |\n  Faz uma coisa.\n  Use quando precisar.\nmetadata:\n  version: \"1\"\n---\n")
+        self.assertEqual(validar_skill.validar(p), [])
+
+    def test_description_em_bloco_vazio_e_falta(self):
+        p = self.skill("a", "---\nname: a\ndescription: |\nlicense: MIT\n---\n")
+        self.assertTrue(any("falta o campo description" in e for e in validar_skill.validar(p)))
+
     def test_tokens_estimados(self):
         corpo = ("x" * 99 + "\n") * 110  # ~11.000 caracteres, ~3.143 tokens
         p = self.skill("a", "---\nname: a\ndescription: x\n---\n" + corpo)

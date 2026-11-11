@@ -120,5 +120,132 @@ class TestRotular(unittest.TestCase):
         self.assertIsNotNone(rotular.fonte_ok("[usuário]", "—"))
 
 
+    # ---- G6: A-1, V-2, A-3, A-5, A-8 ------------------------------------
+    def _base(self):
+        return (FIX / "boas" / "entrega-exemplo.md").read_text(encoding="utf-8")
+
+    def _roda_texto(self, texto):
+        p = Path(self.tmp.name) / "e.md"
+        p.write_text(texto, encoding="utf-8")
+        return roda([str(p)])
+
+    def _troca(self, a, b):
+        base = self._base()
+        self.assertEqual(base.count(a), 1, a)
+        return base.replace(a, b)
+
+    def test_linha_solta_depois_da_tabela_de_fatos_e_conferida(self):
+        # A-1: linha de tabela depois de linha em branco tambem tem rotulo e fonte conferidos
+        rc, out = roda([str(FIX / "ruins" / "fatos-linha-solta.md")])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("Rótulo inválido 'sem fonte'", out)
+        self.assertIn("Rótulo inválido '[inventado]'", out)
+
+    def test_segunda_tabela_em_fatos_e_conferida(self):
+        # A-1: segunda tabela sob '###' com rotulo inventado
+        rc, out = roda([str(FIX / "ruins" / "fatos-segunda-tabela.md")])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("Rótulo inválido '[achismo]'", out)
+        self.assertIn("fora da tabela em '## Fatos'", out)  # a linha '###'
+
+    def test_item_de_lista_em_fatos_reprova(self):
+        # A-1: linha nao vazia fora de tabela dentro de Fatos
+        rc, out = roda([str(FIX / "ruins" / "fatos-item-de-lista.md")])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("fora da tabela em '## Fatos'", out)
+        self.assertIn("fatos-item-de-lista.md:16:", out)
+
+    def test_linha_solta_em_numeros_reprova(self):
+        # A-1: o mesmo vale para Numeros
+        rc, out = self._roda_texto(self._troca("\n## Conceitos", "Os números acima são firmes.\n\n## Conceitos"))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("fora da tabela em '## Números'", out)
+
+    def test_segundo_titulo_com_numero_reprova(self):
+        # V-2: linha '# ...' a mais antes da primeira secao nao pula a conferencia
+        rc, out = roda([str(FIX / "ruins" / "titulo-com-adocao.md")])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("número '80%' no cabeçalho", out)
+        self.assertIn("mais de uma linha de título", out)
+
+    def test_titulo_e_empreitada_com_numero_reprovam(self):
+        # A-3: titulo e valor de 'empreitada:' passam pela conferencia de numero
+        for nome in ("titulo-unico-com-adocao", "cabecalho-com-adocao"):
+            with self.subTest(nome):
+                rc, out = roda([str(FIX / "ruins" / f"{nome}.md")])
+                self.assertEqual(rc, 1, out)
+                self.assertIn("número '70%' no cabeçalho", out)
+
+    def test_data_do_cabecalho_tem_de_ser_data_valida(self):
+        # A-3: 'data:' so aceita AAAA-MM-DD valida
+        rc, out = roda([str(FIX / "ruins" / "data-do-cabecalho-invalida.md")])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("deve ser uma data AAAA-MM-DD", out)
+        self.assertIn("90.000", out)
+        for ruim in ("2026-02-30", "10/03/2026", "2026-03-10 e mais texto"):
+            with self.subTest(ruim):
+                rc, out = self._roda_texto(self._troca("data: 2026-03-10\n", f"data: {ruim}\n"))
+                self.assertEqual(rc, 1, out)
+                self.assertIn("deve ser uma data AAAA-MM-DD", out)
+
+    def test_chave_repetida_no_cabecalho_tambem_e_conferida(self):
+        # A-3: a primeira 'empreitada:' nao pode esconder numero atras da segunda
+        rc, out = self._roda_texto("empreitada: lucro de R$ 777 garantido\n" + self._base())
+        self.assertEqual(rc, 1, out)
+        self.assertIn("777", out)
+
+    def test_multiplicador_depois_do_numero_conta(self):
+        # A-5: 'R$ 2 milhoes' nao casa com o 2 (semanas) da tabela
+        rc, out = roda([str(FIX / "ruins" / "numero-com-multiplicador.md")])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("número 'R$ 2 milhões'", out)
+        self.assertIn("número '15 mil'", out)
+        self.assertIn("número '40k'", out)
+        self.assertEqual(len([l for l in out.splitlines() if ".md:" in l]), 3, out)
+
+    def test_multiplicador_casa_com_o_valor_por_extenso_da_tabela(self):
+        # A-5: 52 mil na prosa e 52.000 na tabela sao o mesmo valor
+        rc, out = self._roda_texto(self._troca("Conceito a abandonar", "A cidade tem 52 mil habitantes (N8). Conceito a abandonar"))
+        self.assertEqual(rc, 0, out)
+        self.assertEqual([v for _, v in rotular.numeros("R$ 2 milhões, 15 mil, 40k, 3 bi, 2 milímetros")],
+                         [2e6, 15000.0, 40000.0, 3e9, 2.0])
+
+    def test_linha_sem_coluna_reprova(self):
+        # A-8: linha da tabela sem a coluna Fonte
+        rc, out = self._roda_texto(self._troca(
+            "| F1 | O dono vende 180 pães por dia no balcão | [usuário] | informado em 2026-03-02 |",
+            "| F1 | O dono vende 180 pães por dia no balcão | [usuário] |"))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("linha com 3 colunas, esperadas 4", out)
+
+    def test_identificador_repetido_reprova(self):
+        # A-8
+        rc, out = self._roda_texto(self._troca("| F3 | A sobra", "| F1 | A sobra"))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("# 'F1' repetido na tabela Fatos", out)
+
+    def test_tabela_sem_linha_reprova(self):
+        # A-8
+        t = self._base()
+        ini, fim = t.index("| F1 |"), t.index("\n## Números")
+        rc, out = self._roda_texto(t[:ini] + t[fim:])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("tabela 'Fatos' sem nenhuma linha", out)
+
+    def test_tamanho_fora_de_e0_a_e3_reprova(self):
+        # A-8
+        for ruim in ("E4", "grande", "E2 ou E3"):
+            with self.subTest(ruim):
+                rc, out = self._roda_texto(self._troca("tamanho: E2\n", f"tamanho: {ruim}\n"))
+                self.assertEqual(rc, 1, out)
+                self.assertIn("fora de E0 a E3", out)
+
+    def test_secao_repetida_reprova(self):
+        # A-8
+        rc, out = self._roda_texto(self._base() + "\n## Limites desta análise\n\nOutra versão dos limites desta análise.\n")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("seção repetida: '## Limites desta análise'", out)
+
+
 if __name__ == "__main__":
     unittest.main()

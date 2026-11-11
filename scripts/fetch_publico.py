@@ -40,7 +40,9 @@ TIMEOUT = 15
 PRAZO_TOTAL = 30  # segundos para uma consulta inteira (cabeçalho, corpo e repetição); o timeout vale por operação
 VALIDADE_CACHE_S = 24 * 3600
 # naturezas jurídicas de pessoa física que o cadastro público devolve com nome na razão social
-NATUREZAS_INDIVIDUAIS = frozenset({"2135", "2305"})  # empresário individual, EIRELI (conferir tabela CONCLA antes de citar)
+NATUREZAS_INDIVIDUAIS = frozenset({"2135", "2305", "2321"})  # empresário individual, EIRELI, sociedade individual de advocacia (conferir tabela CONCLA antes de citar)
+# sociedade empresária limitada (LTDA): razão social costuma trazer o nome do sócio; decisão do usuário em 2026-11-11
+NATUREZAS_SEM_NOME = frozenset({"2062"})
 UFS = frozenset(
     "AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO".split()
 )
@@ -165,22 +167,48 @@ def _normalizar(s):
     return "".join(c for c in s if not unicodedata.combining(c)).lower()
 
 
+TETO_TEXTO = 300  # caracteres por campo de texto vindo da API
+
+
 def _livre(valor):
-    """Texto livre da API (nome, razão social, descrição): é dado de terceiro, passa pelo filtro de ficha."""
-    return None if valor is None else ler_ficha.sanear_livre(valor)
+    """Texto livre da API (nome, razão social, descrição): é dado de terceiro, passa pelo filtro de ficha.
+
+    Só texto e número saem, cortados em TETO_TEXTO; objeto ou lista no lugar do texto vira None.
+    """
+    if valor is None or isinstance(valor, (dict, list, bool)):
+        return None
+    return ler_ficha.sanear_livre(valor, teto=TETO_TEXTO)
+
+
+def _t(valor):
+    """Qualquer campo de texto da API: número passa como está; texto passa por `_livre`; o resto some."""
+    if isinstance(valor, bool) or valor is None:
+        return None
+    if isinstance(valor, (int, float)):
+        return valor
+    return _livre(valor) if isinstance(valor, str) else None
+
+
+def _serie(valor):
+    """Campo `serie` do agregado: só os valores numéricos de um objeto; texto e aninhamento saem."""
+    if isinstance(valor, dict):
+        # a chave também é texto da API: só período numérico (IBGE: 4 a 8 dígitos) passa
+        return {k: v for k, v in valor.items() if re.fullmatch(r"\d{4,8}", str(k))
+                and isinstance(v, (int, float)) and not isinstance(v, bool)}
+    return _t(valor)
 
 
 def _leva_razao_social(j):
     """Razão social só sai para natureza que a tem própria (órgão, sociedade, associação).
 
-    Pessoa física, empresário individual, EI/EIRELI, MEI e natureza não informada não levam: a razão
-    social delas costuma ser o nome da pessoa. Faixas pela primeira posição do código (1, 2 e 3).
+    Pessoa física, empresário individual, EI/EIRELI, MEI, LTDA e natureza não informada não levam: a razão
+    social delas costuma ser o nome da pessoa (LTDA: nome do sócio). Faixas pela primeira posição do código (1, 2 e 3).
     """
     cod = str(j.get("codigo_natureza_juridica") or "")
     nat = _normalizar(j.get("natureza_juridica"))
     if not cod.isdigit() or cod[0] not in "123":
         return False
-    if cod in NATUREZAS_INDIVIDUAIS or "individual" in nat or "eireli" in nat:
+    if cod in NATUREZAS_INDIVIDUAIS or cod in NATUREZAS_SEM_NOME or "individual" in nat or "eireli" in nat:
         return False
     return j.get("opcao_pelo_mei") is not True
 
@@ -318,12 +346,12 @@ class Cliente:
             if not isinstance(j, dict):
                 raise ErroFetch("formato inesperado do IBGE (esperava um objeto).")
             if tipo == "estados":
-                return {"id": j.get("id"), "sigla": j.get("sigla"), "nome": j.get("nome"),
-                        "regiao": (j.get("regiao") or {}).get("nome")}, []
+                return {"id": _t(j.get("id")), "sigla": _t(j.get("sigla")), "nome": _t(j.get("nome")),
+                        "regiao": _t((j.get("regiao") or {}).get("nome"))}, []
             uf = (((j.get("microrregiao") or {}).get("mesorregiao") or {}).get("UF") or {})
             uf = uf or ((j.get("regiao-imediata") or {}).get("regiao-intermediaria") or {}).get("UF") or {}
-            return {"id": j.get("id"), "nome": j.get("nome"), "uf": uf.get("sigla"),
-                    "regiao": (uf.get("regiao") or {}).get("nome")}, []
+            return {"id": _t(j.get("id")), "nome": _t(j.get("nome")), "uf": _t(uf.get("sigla")),
+                    "regiao": _t((uf.get("regiao") or {}).get("nome"))}, []
 
         return self._resolver(url, resumir)
 
@@ -348,9 +376,9 @@ class Cliente:
                             cortado = True
                             break
                         loc = s.get("localidade") or {}
-                        res.append({"localidade_id": loc.get("id"), "localidade": (loc.get("nome")),
-                                    "serie": s.get("serie")})
-                out.append({"variavel": v.get("variavel"), "unidade": v.get("unidade"), "resultados": res})
+                        res.append({"localidade_id": _t(loc.get("id")), "localidade": _t(loc.get("nome")),
+                                    "serie": _serie(s.get("serie"))})
+                out.append({"variavel": _t(v.get("variavel")), "unidade": _t(v.get("unidade")), "resultados": res})
             return out, (["resumo cortado em 50 séries"] if cortado else [])
 
         return self._resolver(url, resumir)
@@ -363,7 +391,7 @@ class Cliente:
         def resumir(j):
             if not isinstance(j, list):
                 raise ErroFetch("formato inesperado do Banco Central (esperava uma lista).")
-            return {"serie": serie, "pontos": [{"data": p.get("data"), "valor": p.get("valor")}
+            return {"serie": serie, "pontos": [{"data": _t(p.get("data")), "valor": _t(p.get("valor"))}
                                               for p in j if isinstance(p, dict)]}, []
 
         return self._resolver(url, resumir)
@@ -384,9 +412,11 @@ class Cliente:
             itens = (r or {}).get("results") if isinstance(r, dict) else None
             if not isinstance(itens, list):
                 raise ErroFetch("formato inesperado do TSE (esperava resultados de busca).")
-            return {"total": r.get("count"), "pacotes": [
+            # descrição: a checagem de instrução vê o texto inteiro e só depois corta em 200 (adversario-4 R-04)
+            return {"total": _t(r.get("count")), "pacotes": [
                 {"nome": _livre(i.get("name")), "titulo": _livre(i.get("title")),
-                 "descricao": _livre((i.get("notes") or "")[:200])} for i in itens if isinstance(i, dict)]}, []
+                 "descricao": ler_ficha.sanear_livre(i.get("notes"), teto=200)
+                 if isinstance(i.get("notes"), str) else None} for i in itens if isinstance(i, dict)]}, []
 
         return self._resolver(url, resumir)
 
@@ -398,10 +428,10 @@ class Cliente:
             if not isinstance(j, dict):
                 raise ErroFetch("formato inesperado da BrasilAPI (esperava um objeto).")
             nat = j.get("natureza_juridica")
-            d = {"cnpj": numero, "situacao": j.get("descricao_situacao_cadastral"),
-                 "cnae_fiscal": j.get("cnae_fiscal"), "cnae_descricao": j.get("cnae_fiscal_descricao"),
-                 "municipio": j.get("municipio"), "uf": j.get("uf"),
-                 "data_inicio_atividade": j.get("data_inicio_atividade"), "natureza_juridica": nat}
+            d = {"cnpj": numero, "situacao": _livre(j.get("descricao_situacao_cadastral")),
+                 "cnae_fiscal": _t(j.get("cnae_fiscal")), "cnae_descricao": _livre(j.get("cnae_fiscal_descricao")),
+                 "municipio": _livre(j.get("municipio")), "uf": _t(j.get("uf")),
+                 "data_inicio_atividade": _t(j.get("data_inicio_atividade")), "natureza_juridica": _livre(nat)}
             avisos = ["quadro societário, telefone, e-mail e endereço não são gravados."]
             if _leva_razao_social(j):
                 d["razao_social"] = _livre(j.get("razao_social"))

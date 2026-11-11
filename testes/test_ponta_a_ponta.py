@@ -228,6 +228,155 @@ class TestPontaAPonta(unittest.TestCase):
         self.assertIn("eleitoral", out)
         self.assertNotIn("entrega", self.estado()["passos"])
 
+    # --- resposta trocada depois da entrega marcada (V-1, A-2) ---
+
+    def marca_boa(self):
+        self.prepara()  # E2, não
+        entrega = self.entrega_de("boas/entrega-exemplo.md")
+        rc, out = self.dossie("marcar", SLUG, "entrega", "--evidencia", entrega)
+        self.assertEqual(rc, 0, out)
+        return entrega
+
+    def test_responder_tamanho_com_entrega_marcada_recusa(self):
+        self.marca_boa()
+        rc, out = self.dossie("responder", SLUG, "tamanho", "E3")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("entrega foi conferida com a resposta antiga", out)
+        self.assertIn("desmarcar", out)  # diz o comando que libera a troca
+        self.assertEqual(self.estado()["respostas"]["tamanho"], "E2")
+        self.assertIn("entrega", self.estado()["passos"])
+        # repetir a mesma resposta não muda nada e segue aceito
+        self.assertEqual(self.dossie("responder", SLUG, "tamanho", "E2")[0], 0)
+        # resposta que não é da trava segue livre
+        self.assertEqual(self.dossie("responder", SLUG, "aprendizado", "proposto")[0], 0)
+
+    def test_desmarcar_libera_a_troca_e_guarda_o_registro(self):
+        self.marca_boa()
+        anterior = self.estado()["passos"]["entrega"]
+        rc, out = self.dossie("desmarcar", SLUG, "entrega")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("entrega", self.estado()["passos"])
+        self.assertEqual(self.estado()["desmarcados"][-1]["passo"], "entrega")
+        self.assertEqual(self.estado()["desmarcados"][-1]["registro"], anterior)
+        # sem entrega marcada, a troca de resposta volta a ser aceita
+        self.assertEqual(self.dossie("responder", SLUG, "tamanho", "E3")[0], 0)
+        self.assertEqual(self.estado()["respostas"]["tamanho"], "E3")
+
+    def test_desmarcar_passo_nao_marcado_recusa(self):
+        self.prepara()
+        rc, out = self.dossie("desmarcar", SLUG, "entrega")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("nada a desmarcar", out)
+
+    def test_responder_eleitoral_com_entrega_marcada_recusa(self):
+        self.marca_boa()
+        rc, out = self.dossie("responder", SLUG, "eleitoral", "sim")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("entrega foi conferida com a resposta antiga", out)
+        self.assertEqual(self.estado()["respostas"]["eleitoral"], "não")
+        # o vaivém do V-1 (troca, marca, destroca) morre na destroca
+        self.assertEqual(self.dossie("responder", SLUG, "aprendizado", "nada a propor")[0], 0)
+        self.assertEqual(self.dossie("fechar", SLUG)[0], 0)
+
+    def troca_resposta_no_arquivo(self, chave, valor):
+        arq = self.pasta() / "estado.json"
+        est = json.loads(arq.read_text(encoding="utf-8"))
+        est["respostas"][chave] = valor
+        arq.write_text(json.dumps(est, ensure_ascii=False), encoding="utf-8")
+
+    def test_fechar_reconfere_cabecalho_da_entrega(self):
+        self.marca_boa()
+        self.assertEqual(self.dossie("responder", SLUG, "aprendizado", "nada a propor")[0], 0)
+        self.troca_resposta_no_arquivo("eleitoral", "sim")  # por fora do responder
+        rc, out = self.dossie("fechar", SLUG)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("cabeçalho da entrega diverge", out)
+        self.assertIn("eleitoral", out)
+        self.assertIsNone(self.estado()["fechado"])
+        self.troca_resposta_no_arquivo("eleitoral", "não")
+        self.troca_resposta_no_arquivo("tamanho", "E3")
+        rc, out = self.dossie("fechar", SLUG)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("tamanho", out)
+        self.assertIsNone(self.estado()["fechado"])
+        self.troca_resposta_no_arquivo("tamanho", "E2")
+        self.assertEqual(self.dossie("fechar", SLUG)[0], 0)
+
+    def test_fechar_reconfere_sha256_da_entrega(self):
+        entrega = self.marca_boa()
+        self.assertEqual(self.dossie("responder", SLUG, "aprendizado", "nada a propor")[0], 0)
+        original = entrega.read_bytes()
+        entrega.write_bytes(original + b"\nLinha posta depois da conferencia.\n")
+        rc, out = self.dossie("fechar", SLUG)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("mudou depois de conferida", out)
+        self.assertIsNone(self.estado()["fechado"])
+        entrega.unlink()
+        rc, out = self.dossie("fechar", SLUG)
+        self.assertEqual(rc, 1, out)
+        self.assertIsNone(self.estado()["fechado"])
+        entrega.write_bytes(original)
+        self.assertEqual(self.dossie("fechar", SLUG)[0], 0)
+
+    # --- fontes de --pesquisa (A-9) ---
+
+    def test_pesquisa_dentro_do_dossie_ou_a_propria_entrega_recusa(self):
+        self.prepara()
+        entrega = self.entrega_de("boas/entrega-exemplo.md")  # em dossies/<slug>/
+        casos = [self.pasta(), entrega, Path(self.tmp.name) / "dossies", Path(self.tmp.name)]
+        sub = self.pasta() / "pesquisa"
+        sub.mkdir()
+        (sub / "nota.md").write_text("Texto sem relação com a entrega.\n", encoding="utf-8")
+        casos += [sub, sub / "nota.md"]
+        copia = Path(self.tmp.name) / "copia-fora.md"
+        shutil.copy(entrega, copia)  # mesmo conteúdo, outro caminho
+        casos.append(copia)
+        for fonte in casos:
+            rc, out = self.dossie("marcar", SLUG, "entrega", "--evidencia", entrega, "--pesquisa", fonte)
+            self.assertEqual(rc, 1, "%s: %s" % (fonte, out))
+            self.assertIn("fonte de pesquisa recusada", out, fonte)
+            self.assertNotIn("entrega", self.estado()["passos"])
+
+    def test_fontes_de_pesquisa_ficam_no_passo(self):
+        self.prepara()
+        entrega = self.entrega_de("boas/entrega-exemplo.md")
+        solta = Path(self.tmp.name) / "fonte-solta.md"
+        solta.write_text("Texto sem relação com a entrega.\n", encoding="utf-8")
+        pasta = Path(self.tmp.name) / "fontes"
+        pasta.mkdir()
+        (pasta / "b.txt").write_text("Outro texto qualquer.\n", encoding="utf-8")
+        (pasta / "x.bin").write_bytes(b"\x00\x01")  # o lint não lê: fica fora da lista
+        rc, out = self.dossie("marcar", SLUG, "entrega", "--evidencia", entrega,
+                              "--pesquisa", solta, "--pesquisa", pasta)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("checagem de cópia não rodou", out)
+        fontes = self.estado()["passos"]["entrega"]["pesquisa"]
+        self.assertEqual([f["caminho"] for f in fontes], [str(solta), str(pasta / "b.txt")])
+        for f in fontes:
+            self.assertEqual(f["sha256"], hashlib.sha256(Path(f["caminho"]).read_bytes()).hexdigest())
+
+    def test_aviso_quando_nenhuma_fonte_de_pesquisa_foi_lida(self):
+        self.prepara()
+        entrega = self.entrega_de("boas/entrega-exemplo.md")
+        rc, out = self.dossie("marcar", SLUG, "entrega", "--evidencia", entrega)
+        self.assertEqual(rc, 0, out)  # avisa, não bloqueia
+        self.assertIn("checagem de cópia não rodou", out)
+        self.assertEqual(self.estado()["passos"]["entrega"]["pesquisa"], [])
+        # já marcado: não repete o aviso como se tivesse conferido de novo
+        rc, out = self.dossie("marcar", SLUG, "entrega", "--evidencia", entrega)
+        self.assertIn("já estava marcado", out)
+
+    def test_aviso_quando_a_pasta_de_pesquisa_nao_tem_texto(self):
+        self.prepara()
+        entrega = self.entrega_de("ruins/trecho-copiado.md")
+        pasta = Path(self.tmp.name) / "so-binario"
+        pasta.mkdir()
+        (pasta / "x.bin").write_bytes(b"\x00\x01")
+        rc, out = self.dossie("marcar", SLUG, "entrega", "--evidencia", entrega, "--pesquisa", pasta)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("checagem de cópia não rodou", out)
+        self.assertEqual(self.estado()["passos"]["entrega"]["pesquisa"], [])
+
     def test_valor_do_ambiente_nao_aparece_na_saida(self):
         casa = Path(self.tmp.name) / "SENTINELA_CASA_7f3a"
         base = Path(self.tmp.name) / "SENTINELA_DADOS_7f3a"

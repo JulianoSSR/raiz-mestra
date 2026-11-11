@@ -6,16 +6,21 @@ fato seja verdadeiro, que uma URL exista ou que um numero esteja certo: isso e
 o portao 2 (juiz). O que e conferido:
 
   - cabecalho (linhas `chave: valor` antes do primeiro `##`) com empreitada,
-    tamanho (E0 a E3), eleitoral (sim|nao) e data;
+    tamanho (E0 a E3), eleitoral (sim|nao) e data (AAAA-MM-DD valida), e no
+    maximo uma linha de titulo `# ...`;
   - as 8 secoes de nivel 2 com titulo exato, cada uma uma vez;
-  - tabelas Fatos e Numeros com as colunas certas e, em toda linha, Rotulo
-    valido e Fonte no formato do rotulo:
+  - secoes Fatos e Numeros so com tabela: toda linha iniciada por `|` e
+    conferida (inclusive depois de linha em branco ou em segunda tabela) e
+    qualquer outra linha nao vazia reprova; colunas certas e, em toda linha,
+    Rotulo valido e Fonte no formato do rotulo:
       [usuario]   -> data AAAA-MM-DD
       [publico]   -> URL http(s) e data AAAA-MM-DD
       [simulacao] -> `painel:<id>`
       [hipotese]  -> `como medir: ...`
-  - todo numero da prosa (valor monetario, percentual, quantidade) tem valor
-    igual ao de alguma linha da coluna Numero da tabela Numeros.
+  - todo numero da prosa, do titulo e dos valores do cabecalho (valor
+    monetario, percentual, quantidade) tem valor igual ao de alguma linha da
+    coluna Numero da tabela Numeros; multiplicador depois do numero conta
+    ("2 milhoes" vale 2.000.000, "15 mil" vale 15.000, "40k" vale 40.000).
 
 Declaradamente NAO pega:
   - se a fonte e verdadeira, se a URL abre ou se a data e a real;
@@ -24,7 +29,8 @@ Declaradamente NAO pega:
   - ano isolado (19xx/20xx sem R$ nem %) e numero colado em letras (E3, COVID-19)
     sao ignorados de proposito, e por isso tambem nao sao conferidos;
   - numero escrito em imagem, codigo ou fora do Markdown;
-  - tabela quebrada em varias partes dentro da mesma secao (so a primeira conta).
+  - multiplicador fora da lista (mil, milhao/milhoes, bilhao/bilhoes, mi, bi,
+    k, M) ou composto ("2 mil e 500" vale 2.000 e 500 em separado).
 
 Saida: 0 aprovado, 1 reprovado, 2 uso errado.
 """
@@ -107,8 +113,28 @@ def parse_entrega(texto):
     return {"header": header, "secoes": secoes, "erros": erros, "pre": pre}
 
 
+def prosa_cabecalho(ent):
+    """(linha, texto) do titulo '# ...' e do valor de cada chave do cabecalho.
+
+    E o que linhas_fora_de_secao deixa passar; quem chama confere esse texto
+    com as mesmas regras da prosa das secoes."""
+    out = []
+    for n, ln in ent["pre"]:
+        s = ln.strip()
+        m = re.match(r"^#(?!#)\s+(.*)$", s)
+        if m:
+            out.append((n, m.group(1)))
+            continue
+        m = re.match(r"^([A-Za-zÀ-ÿ_]+)\s*:\s*(.*)$", s)
+        if m and sem_acento(m.group(1)).lower() in CHAVES:
+            out.append((n, m.group(2)))
+    return out
+
+
 def linhas_fora_de_secao(ent):
-    """Linhas antes da primeira secao que nao sao vazias, titulo '# ...' nem chave do cabecalho."""
+    """Linhas antes da primeira secao que nao sao vazias, titulo '# ...' nem chave do cabecalho.
+
+    Titulo e chaves nao ficam sem conferencia: saem em prosa_cabecalho."""
     out = []
     for n, ln in ent["pre"]:
         s = ln.strip()
@@ -142,18 +168,21 @@ def eh_separador(cels):
 
 
 def tabela(sec):
-    """Primeira tabela da secao: (cabecalho, [(linha, celulas)], linhas_da_tabela)."""
+    """Todas as linhas de tabela da secao: (cabecalho, [(linha, celulas)], linhas_da_tabela).
+
+    A primeira linha iniciada por '|' e o cabecalho. Toda outra linha iniciada
+    por '|' entra como linha de dados, mesmo depois de linha em branco, de
+    texto ou de subtitulo; so o separador e a repeticao exata do cabecalho
+    (segunda tabela) ficam de fora."""
     cab, rows, usadas = None, [], set()
     for n, ln in sec["linhas"]:
         if not ln.lstrip().startswith("|"):
-            if cab is not None:
-                break
             continue
         cels = celulas(ln)
         usadas.add(n)
         if cab is None:
             cab = cels
-        elif eh_separador(cels):
+        elif eh_separador(cels) or [c.lower() for c in cels] == [c.lower() for c in cab]:
             continue
         else:
             rows.append((n, cels))
@@ -165,7 +194,11 @@ RE_REF = re.compile(r"\b[FN]\d+\b|#\d+")
 RE_DATAS = re.compile(r"\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{2,4}|\d{1,2}/\d{4}")
 RE_COLADO = re.compile(r"\b[A-Za-z][A-Za-z\-]*\d[\w.]*")
 RE_LISTA = re.compile(r"^\s*(?:[-*>]\s+)?\d+[.)]\s")
-RE_NUM = re.compile(r"(R\$\s*)?(\d+(?:\.\d{3})+(?:,\d+)?|\d+(?:,\d+)?|\d+\.\d+)(\s*%)?")
+RE_NUM = re.compile(
+    r"(R\$\s*)?(\d+(?:\.\d{3})+(?:,\d+)?|\d+(?:,\d+)?|\d+\.\d+)"
+    r"(?:\s*((?i:milh[ãa]o|milh[õo]es|bilh[ãa]o|bilh[õo]es|mil|mi|bi)|[kK]|M)(?![\wÀ-ÿ]))?(\s*%)?")
+MULT = {"mil": 1e3, "k": 1e3, "mi": 1e6, "m": 1e6, "milhao": 1e6, "milhoes": 1e6,
+        "bi": 1e9, "bilhao": 1e9, "bilhoes": 1e9}
 
 
 def numeros(texto):
@@ -180,7 +213,9 @@ def numeros(texto):
         bruto = m.group(2)
         valor = float(bruto.replace(".", "").replace(",", ".")) \
             if re.search(r",|\.\d{3}\b", bruto) else float(bruto)
-        if re.fullmatch(r"(19|20)\d\d", bruto) and not m.group(1) and not m.group(3):
+        if m.group(3):
+            valor *= MULT[sem_acento(m.group(3)).lower()]
+        elif re.fullmatch(r"(19|20)\d\d", bruto) and not m.group(1) and not m.group(4):
             continue
         out.append((m.group(0).strip(), valor))
     return out
@@ -201,6 +236,11 @@ def valida(texto, nome):
         erro(1, f"tamanho '{h['tamanho']}' fora de E0 a E3")
     if h.get("eleitoral") and sem_acento(h["eleitoral"]).lower() not in ("sim", "nao"):
         erro(1, f"eleitoral '{h['eleitoral']}' deve ser sim ou não")
+    if h.get("data") and not (re.fullmatch(r"\d{4}-\d{2}-\d{2}", h["data"]) and data_valida(h["data"])):
+        erro(1, f"data '{h['data'][:40]}' do cabeçalho deve ser uma data AAAA-MM-DD válida, e só ela")
+    titulos_h1 = [n for n, ln in ent["pre"] if re.match(r"^#(?!#)\s", ln.strip())]
+    for n in titulos_h1[1:]:
+        erro(n, "mais de uma linha de título '# ...' antes da primeira seção (só uma é aceita)")
 
     for n, ln in linhas_fora_de_secao(ent):
         erro(n, f"texto antes da primeira seção (só 'chave: valor' do cabeçalho e título '# ...'): \"{ln.strip()[:80]}\"")
@@ -222,7 +262,10 @@ def valida(texto, nome):
         sec = secao(ent, titulo)
         if sec is None:
             continue
-        cab, rows, _ = tabela(sec)
+        cab, rows, usadas = tabela(sec)
+        for n, ln in sec["linhas"]:
+            if ln.strip() and n not in usadas:
+                erro(n, f"linha fora da tabela em '## {titulo}' (a seção só aceita a tabela): \"{ln.strip()[:80]}\"")
         if cab is None:
             erro(sec["linha"], f"seção '{titulo}' sem tabela")
             continue
@@ -254,6 +297,12 @@ def valida(texto, nome):
             if titulo == "Números":
                 if not numeros(cels[1]) and not re.search(r"\d", cels[1]):
                     erro(n, f"coluna Número sem valor numérico (linha {ident})")
+
+    # numeros no titulo e nos valores do cabecalho
+    for n, txt in prosa_cabecalho(ent):
+        for bruto, v in numeros(txt):
+            if v not in valores_numeros:
+                erro(n, f"número '{bruto}' no cabeçalho ou no título sem linha na tabela Números")
 
     # numeros na prosa
     for s in ent["secoes"]:
