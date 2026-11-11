@@ -1,6 +1,49 @@
-# Raiz Mestra
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/raiz-mestra-logo-escuro.svg">
+    <img src="assets/raiz-mestra-logo-completo.svg" alt="Raiz Mestra" width="520">
+  </picture>
+</p>
 
-**Da ideia ao plano com fonte.** Uma skill de agente que conduz uma empreitada (empresa, produto, jogo, campanha, imagem pessoal, negociação) perguntando antes de desenhar, buscando dado público do Brasil, mapeando o que já existe e atacando o próprio plano antes de entregar. Cada fato da entrega diz de onde veio.
+<p align="center"><strong>Da ideia ao plano com fonte.</strong></p>
+
+## Antes de gastar dinheiro ou meses, saiba de onde vem cada número
+
+Um plano de negócio costuma ter números sem origem, e um número sem origem passa por fato. A Raiz Mestra existe para que isso não aconteça. Ela conduz uma empreitada (uma empresa, um produto, uma campanha, uma negociação) da ideia até um plano, e faz três coisas:
+
+1. **Pergunta antes de desenhar.** Quer saber o que você já fez, não o que acha que vai acontecer.
+2. **Busca dado público do Brasil** (IBGE, Banco Central, TSE, CNPJ) e mostra a fonte e a data.
+3. **Ataca o próprio plano** com um pré-mortem: "fracassou em um ano; por quê?"
+
+Cada fato da entrega leva um rótulo: `[usuário]`, `[público]`, `[simulação]` ou `[hipótese]`. Hipótese vem com o jeito de medir. A skill não prevê venda, adesão nem voto: entrega objeções, comparações e o próximo teste real, que é com gente de verdade.
+
+### Um trecho de entrega (exemplo fictício)
+
+Do arquivo `testes/fixtures/boas/entrega-exemplo.md`:
+
+| # | Número | O que mede | Rótulo | Fonte |
+|---|--------|------------|--------|-------|
+| N1 | 180 | pães vendidos por dia | [usuário] | informado em 2026-03-02 |
+| N2 | R$ 12,50 | ticket médio por assinatura semanal | [hipótese] | como medir: perguntar o preço aceito a 10 clientes do balcão |
+| N4 | 40 | assinantes ao fim do primeiro mês | [hipótese] | como medir: contar inscritos na lista de espera em 2 semanas |
+| N8 | 52.000 | habitantes da cidade | [público] | https://exemplo.org/censo-ficticio consultado em 2026-03-04 |
+
+**Próximo teste real:** convidar 10 clientes do balcão para uma assinatura de teste por 2 semanas e registrar quantos aceitam e a que preço.
+
+### Para quem é
+
+- Quem vai decidir algo pequeno e reversível e quer um teste barato antes de investir (tamanho E1).
+- Quem precisa de um plano em que cada afirmação se sustenta, para mostrar a um sócio, a um banco ou a um cliente (tamanho E2).
+
+Não é para quem quer uma previsão pronta. A skill recusa isso de propósito.
+
+### Como começar
+
+1. Instale o link simbólico (seção [Instalar](#instalar)).
+2. Abra o Claude Code e digite `/raiz-mestra` seguido da sua ideia.
+3. Responda às perguntas da triagem: tamanho da empreitada e se envolve eleição.
+
+Esta própria apresentação é o primeiro teste da skill sobre si mesma, e ainda está em andamento.
 
 Da mesma família da [Seiva](https://github.com/JulianoSSR/seiva) e da [Humanize-me Brasil-IA](https://github.com/JulianoSSR/humanize-me-brasil-ia).
 
